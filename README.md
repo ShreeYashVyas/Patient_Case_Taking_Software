@@ -1,8 +1,8 @@
 # CaseFlow — MERN Patient Case-Taking Demo
 
-CaseFlow is a student/demo project for practicing a structured patient case-taking workflow. It contains a React + Vite frontend and an Express + MongoDB API starter.
+CaseFlow is an educational patient case-taking project with a React + Vite frontend and an Express + MongoDB API.
 
-> **Clinical-data warning:** this is an educational prototype. API endpoints are not authenticated yet. Use fictional records only. Do not connect real patient data or expose the API publicly. Before any real use, implement authentication, role-based authorization, audit logging, encryption and secure deployment/backups, and complete an appropriate privacy/security review.
+> **Clinical-data warning:** this is still a development prototype. Use fictional records only. It is not ready for real patient data or public deployment. Before real-world use, complete a privacy/security review and add audit logging, operational monitoring, secure deployment and backups.
 
 ## Requirements
 
@@ -12,80 +12,121 @@ CaseFlow is a student/demo project for practicing a structured patient case-taki
 
 ## 1. Run the frontend
 
-Open a terminal in the `caseflow` root folder:
+From the project root:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Vite usually serves the frontend at `http://localhost:5173`. In development, Vite forwards `/api` requests to the backend at `http://localhost:5000`. Start the backend in a second terminal using the steps below. For a separately hosted frontend, set `VITE_API_URL` to the backend origin without adding `/api` to the end.
+Vite usually serves the frontend at `http://localhost:5173` and forwards `/api` requests to `http://localhost:5000`. The current frontend has not yet been connected to the new login flow, so protected patient/consultation requests will return `401` until the frontend authentication step is completed.
 
-The React UI loads patients and consultations from the API and saves new records through the API. Appointment scheduling and live activity tracking are still illustrative UI only; there is no appointment API yet. Use fictional records only.
+## 2. Configure and run the API
 
-## 2. Configure MongoDB and run the API
-
-Open a second terminal:
+Open another terminal:
 
 ```bash
 cd server
 npm install
 ```
 
-Copy `server/.env.example` to `server/.env`. On Windows PowerShell:
+Copy the example environment file:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Edit `server/.env` and set `MONGO_URI` to your local MongoDB URI or MongoDB Atlas connection string. Keep `.env` private and never commit it or paste credentials into chat.
+Edit `server/.env` and set `MONGO_URI` to your local MongoDB URI or Atlas connection string. Generate a private session-signing secret:
 
-Start the API:
+```bash
+node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
+```
+
+Paste the generated value into `AUTH_SECRET` in `server/.env`. Keep the real `.env` private; do not commit it or share its secrets. Keep `CLIENT_ORIGIN` matched to the browser origin used by your frontend.
+
+Run the API:
 
 ```bash
 npm run dev
 ```
 
-The API runs at `http://localhost:5000` after MongoDB connects. If using Atlas, make sure your database user and Network Access rules allow your development machine to connect. Do not use a broad public IP allowlist for production.
+The server runs on port 5000 after MongoDB connects. The health endpoint is `http://localhost:5000/api/health`.
 
-## 3. Test the API
+## 3. Create an account
 
-Open `http://localhost:5000/api/health`. A running server returns JSON with its database connection state.
+There is deliberately no public registration endpoint. Create an account from a trusted local terminal after configuring MongoDB and `AUTH_SECRET`.
 
-Available starter endpoints:
+Temporarily set these values in `server/.env`:
+
+- `BOOTSTRAP_USER_NAME`
+- `BOOTSTRAP_USER_EMAIL`
+- `BOOTSTRAP_USER_PASSWORD` (at least 12 characters)
+- `BOOTSTRAP_USER_ROLE` (`doctor`, `receptionist`, or `patient`)
+
+For a patient account, also set `BOOTSTRAP_PATIENT_ID` to the existing MongoDB `_id` of that patient's record. The script checks that the linked record exists. For doctor and receptionist accounts, leave `BOOTSTRAP_PATIENT_ID` empty.
+
+Run from the `server` folder:
+
+```bash
+node scripts/createUser.js
+```
+
+The script refuses to overwrite an existing account. After it succeeds, remove the temporary `BOOTSTRAP_USER_*` values and `BOOTSTRAP_PATIENT_ID` from `.env`. The password is stored as a salted scrypt hash, not plain text.
+
+## 4. Authentication endpoints
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| GET | `/api/health` | Server/database status |
-| GET | `/api/patients` | List patients (`?search=...` supported) |
-| POST | `/api/patients` | Create a patient |
-| GET | `/api/patients/:id` | Patient and consultation history |
-| PATCH | `/api/patients/:id` | Update selected patient fields |
-| GET | `/api/encounters` | List consultation records (`?patientId=...` supported) |
-| POST | `/api/encounters` | Create a consultation and update the patient summary |
-| GET | `/api/encounters/:id` | Get one consultation |
+| POST | `/api/auth/login` | Verify email/password and set an HttpOnly session cookie |
+| POST | `/api/auth/logout` | Clear the session cookie |
+| GET | `/api/auth/me` | Return the signed-in account |
+| GET | `/api/auth/access` | Return the account role and a simple permission summary |
+| GET | `/api/health` | Public server/database status |
 
-The API uses MongoDB ObjectIds in routes. Generated human-readable `patientCode` and `caseCode` values are separate display identifiers.
+Sessions expire after one hour. The session cookie is HttpOnly and SameSite=Strict, and Secure is enabled in production. Login uses a rate limit. State-changing API requests validate the browser origin.
+
+## 5. Role permissions
+
+- **Doctor:** list and manage patient demographics; read and create consultations.
+- **Receptionist:** register patients and manage demographic details. Consultation endpoints and clinical notes are not available to this role.
+- **Patient:** access only the linked patient record and completed/follow-up consultations associated with that record.
+
+Roles come from the stored user account, not from a role field supplied by the browser. Patient account setup requires linking the account to an existing patient record. There is no public signup endpoint.
+
+These permissions are a starting point for the demo, not a substitute for a complete clinical privacy and authorization review.
+
+## Existing data API
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/patients` | List patients; doctor/receptionist only |
+| POST | `/api/patients` | Create a patient; doctor/receptionist only |
+| GET | `/api/patients/:id` | Authorized patient profile |
+| PATCH | `/api/patients/:id` | Update patient demographics; doctor/receptionist only |
+| GET | `/api/encounters` | List authorized consultations |
+| POST | `/api/encounters` | Create a consultation; doctor only |
+| GET | `/api/encounters/:id` | Read a consultation; doctor or linked patient for completed records |
+
+Existing MongoDB patient and encounter records are preserved. Human-readable patient/case codes remain separate from MongoDB ObjectIds.
 
 ## Folder structure
 
 ```text
-caseflow/
-├── src/                    # React + Vite frontend (currently sample state)
-├── package.json            # Frontend scripts and dependencies
-└── server/
-    ├── .env.example
-    ├── package.json
-    └── src/
-        ├── config/db.js
-        ├── middleware/errorHandler.js
-        ├── models/Patient.js
-        ├── models/Encounter.js
-        ├── routes/patients.js
-        ├── routes/encounters.js
-        └── server.js
+src/                         React + Vite frontend
+server/
+  scripts/createUser.js      Trusted local account setup
+  src/config/db.js
+  src/lib/password.js        Password hashing
+  src/middleware/auth.js     Session and role checks
+  src/models/Patient.js
+  src/models/Encounter.js
+  src/models/User.js
+  src/routes/auth.js
+  src/routes/patients.js
+  src/routes/encounters.js
+  src/server.js
 ```
 
-## Next milestone
+## Next step
 
-Add authentication and authorization, audit logging, secure deployment and backups before considering real clinical data. Build appointment endpoints and replace the remaining illustrative dashboard activity with persisted records.
+Connect the existing frontend to `/api/auth/login`, `/api/auth/me`, and `/api/auth/logout`, then add role-based redirects and the three role-appropriate workspaces. Do not use real patient data until the complete system is reviewed and tested.
