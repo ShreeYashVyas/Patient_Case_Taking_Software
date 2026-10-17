@@ -24,7 +24,9 @@ router.get('/', requireAuth, authorizeRoles('doctor', 'receptionist'), async (re
       }
     : {};
 
-  const patients = await Patient.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+  const query = Patient.find(filter).sort({ createdAt: -1 }).limit(100);
+  if (req.user.role === 'receptionist') query.select('-chiefComplaint');
+  const patients = await query.lean();
   res.json({ data: patients, count: patients.length });
 });
 
@@ -49,7 +51,7 @@ router.post('/', requireSameOrigin, requireAuth, authorizeRoles('doctor', 'recep
     email: payload.email || '',
     bloodGroup: payload.bloodGroup || '',
     status: payload.status || 'Active',
-    chiefComplaint: payload.chiefComplaint || '',
+    chiefComplaint: req.user.role === 'doctor' ? (payload.chiefComplaint || '') : '',
   });
   res.status(201).json({ data: patient });
 });
@@ -69,11 +71,24 @@ router.get('/:id', requireAuth, async (req, res) => {
     return res.status(403).json({ message: 'You can only access your own patient record.' });
   }
 
-  // Reception sees demographics only. Patients can see their own completed records.
-  if (req.user.role === 'receptionist') return res.json({ data: { ...patient, encounters: [] } });
+  if (req.user.role === 'receptionist') {
+    const {
+      _id, patientCode, fullName, dateOfBirth, age, gender, phone,
+      email, bloodGroup, status, createdAt, updatedAt,
+    } = patient;
+    return res.json({
+      data: {
+        _id, patientCode, fullName, dateOfBirth, age, gender, phone,
+        email, bloodGroup, status, createdAt, updatedAt,
+      },
+    });
+  }
 
   const encounterFilter = { patient: patient._id };
-  if (req.user.role === 'patient') encounterFilter.status = { $in: ['Completed', 'Follow-up'] };
+  if (req.user.role === 'patient') {
+    encounterFilter.status = { $in: ['Completed', 'Follow-up'] };
+    encounterFilter.patientVisible = true;
+  }
   const encounters = await Encounter.find(encounterFilter)
     .sort({ visitDate: -1 })
     .limit(100)
@@ -85,7 +100,7 @@ router.patch('/:id', requireSameOrigin, requireAuth, authorizeRoles('doctor', 'r
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(400).json({ message: 'Invalid patient ID.' });
   }
-  const allowed = ['fullName', 'dateOfBirth', 'age', 'gender', 'phone', 'email', 'bloodGroup', 'status', 'chiefComplaint'];
+  const allowed = ['fullName', 'dateOfBirth', 'age', 'gender', 'phone', 'email', 'bloodGroup', 'status'];
   const updates = {};
   for (const key of allowed) {
     if (Object.hasOwn(req.body, key)) updates[key] = cleanOptionalString(req.body[key]);
