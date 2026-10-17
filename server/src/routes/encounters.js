@@ -18,6 +18,7 @@ router.get('/', requireAuth, authorizeRoles('doctor', 'patient'), async (req, re
     }
     filter.patient = req.user.patientId;
     filter.status = { $in: ['Completed', 'Follow-up'] };
+    filter.patientVisible = true;
   } else if (typeof req.query.patientId === 'string' && req.query.patientId) {
     if (!mongoose.isValidObjectId(req.query.patientId)) {
       return res.status(400).json({ message: 'Invalid patientId.' });
@@ -66,6 +67,7 @@ router.post('/', requireSameOrigin, requireAuth, authorizeRoles('doctor'), async
     plan: body.plan || '',
     followUpDate: body.followUpDate || null,
     status: body.status || (body.followUpDate ? 'Follow-up' : 'Completed'),
+    patientVisible: false,
   });
 
   patient.lastVisit = encounter.visitDate;
@@ -77,6 +79,32 @@ router.post('/', requireSameOrigin, requireAuth, authorizeRoles('doctor'), async
     .populate('patient', 'patientCode fullName')
     .lean();
   res.status(201).json({ data: saved });
+});
+
+router.patch('/:id/visibility', requireSameOrigin, requireAuth, authorizeRoles('doctor'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ message: 'Invalid case ID.' });
+  }
+  if (typeof req.body?.visible !== 'boolean') {
+    return res.status(400).json({ message: 'visible must be true or false.' });
+  }
+
+  const encounter = await Encounter.findById(req.params.id);
+  if (!encounter) return res.status(404).json({ message: 'Consultation not found.' });
+  if (req.body.visible && !['Completed', 'Follow-up'].includes(encounter.status)) {
+    return res.status(400).json({ message: 'Only completed consultations can be shared with the patient.' });
+  }
+
+  encounter.patientVisible = req.body.visible;
+  await encounter.save();
+  return res.json({
+    data: {
+      id: String(encounter._id),
+      caseCode: encounter.caseCode,
+      status: encounter.status,
+      patientVisible: encounter.patientVisible,
+    },
+  });
 });
 
 router.get('/:id', requireAuth, authorizeRoles('doctor', 'patient'), async (req, res) => {
@@ -93,9 +121,10 @@ router.get('/:id', requireAuth, authorizeRoles('doctor', 'patient'), async (req,
     if (
       !req.user.patientId
       || linkedPatientId !== req.user.patientId
+      || !encounter.patientVisible
       || !['Completed', 'Follow-up'].includes(encounter.status)
     ) {
-      return res.status(403).json({ message: 'You can only access your own completed consultations.' });
+      return res.status(403).json({ message: 'This consultation is not available in your patient portal.' });
     }
   }
   res.json({ data: encounter });
