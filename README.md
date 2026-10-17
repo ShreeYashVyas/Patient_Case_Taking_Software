@@ -19,9 +19,9 @@ npm install
 npm run dev
 ```
 
-Vite usually serves the frontend at `http://localhost:5173`.
+Vite usually serves the frontend at `http://localhost:5173`. In development, Vite forwards `/api` requests to the backend at `http://localhost:5000`. Start the backend in a second terminal using the steps below. For a separately hosted frontend, set `VITE_API_URL` to the backend origin without adding `/api` to the end.
 
-The current React UI still uses in-memory sample data. The API is not wired to the React state yet; that is the next integration task.
+The React UI loads patients and consultations from the API and saves new records through the API. Appointment scheduling and live activity tracking are still illustrative UI only; there is no appointment API yet. Use fictional records only.
 
 ## 2. Configure MongoDB and run the API
 
@@ -88,4 +88,4 @@ caseflow/
 
 ## Next milestone
 
-Connect the React forms and lists to these endpoints through a frontend API service, add loading/error states, and remove the demo state as it is replaced. Then implement authentication and authorization before considering real clinical data.
+Add authentication and authorization, audit logging, secure deployment and backups before considering real clinical data. Build appointment endpoints and replace the remaining illustrative dashboard activity with persisted records.
