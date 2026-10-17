@@ -110,7 +110,19 @@ router.patch('/:id', requireSameOrigin, requireAuth, authorizeRoles('doctor', 'r
     runValidators: true,
   });
   if (!patient) return res.status(404).json({ message: 'Patient not found.' });
-  res.json({ data: patient });
+  if (req.user.role === 'receptionist') {
+    const {
+      _id, patientCode, fullName, dateOfBirth, age, gender, phone,
+      email, bloodGroup, status, createdAt, updatedAt,
+    } = patient.toObject();
+    return res.json({
+      data: {
+        _id, patientCode, fullName, dateOfBirth, age, gender, phone,
+        email, bloodGroup, status, createdAt, updatedAt,
+      },
+    });
+  }
+  return res.json({ data: patient });
 });
 
 export default router;
