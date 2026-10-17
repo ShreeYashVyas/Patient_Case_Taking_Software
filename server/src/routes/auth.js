@@ -5,9 +5,10 @@ import { verifyPassword } from '../lib/password.js';
 import {
   authorizeRoles,
   clearSessionCookie,
-  createSessionToken,
+  createSession,
   requireAuth,
   requireSameOrigin,
+  revokeSession,
   setSessionCookie,
 } from '../middleware/auth.js';
 
@@ -44,12 +45,13 @@ router.post('/login', loginLimiter, requireSameOrigin, async (req, res) => {
     return res.status(401).json({ message: 'Email or password is incorrect.' });
   }
 
-  const token = createSessionToken(user._id);
+  const token = await createSession(user._id);
   setSessionCookie(res, token);
   return res.json({ user: publicUser(user) });
 });
 
-router.post('/logout', requireSameOrigin, (req, res) => {
+router.post('/logout', requireSameOrigin, async (req, res) => {
+  await revokeSession(req);
   clearSessionCookie(res);
   return res.status(204).end();
 });
