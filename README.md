@@ -48,7 +48,7 @@ The server runs on port 5000 after MongoDB connects. The health endpoint is `htt
 
 ## 3. Create an account
 
-There is deliberately no public registration endpoint. Create an account from a trusted local terminal after configuring MongoDB and `AUTH_SECRET`.
+There is deliberately no public registration endpoint. Create an account from a trusted local terminal after configuring MongoDB.
 
 Temporarily set these values in `server/.env`:
 
@@ -65,7 +65,7 @@ Run from the `server` folder:
 node scripts/createUser.js
 ```
 
-The script refuses to overwrite an existing account. After it succeeds, remove the temporary `BOOTSTRAP_USER_*` values and `BOOTSTRAP_PATIENT_ID` from `.env`. The password is stored as a salted scrypt hash, not plain text. Active sessions use random, HttpOnly cookies; only a SHA-256 hash of each session token is stored in MongoDB, allowing logout and account deactivation to revoke access immediately.
+The script refuses to overwrite an existing account. Patient accounts can only see consultations a doctor has explicitly marked visible. After the script succeeds, remove the temporary `BOOTSTRAP_USER_*` values and `BOOTSTRAP_PATIENT_ID` from `.env`. The password is stored as a salted scrypt hash, not plain text. Active sessions use random, HttpOnly cookies; only a SHA-256 hash of each session token is stored in MongoDB, allowing logout and account deactivation to revoke access immediately.
 
 ## 4. Authentication endpoints
 
@@ -99,7 +99,8 @@ These permissions are a starting point for the demo, not a substitute for a comp
 | PATCH | `/api/patients/:id` | Update patient demographics; doctor/receptionist only |
 | GET | `/api/encounters` | List authorized consultations |
 | POST | `/api/encounters` | Create a consultation; doctor only |
-| GET | `/api/encounters/:id` | Read a consultation; doctor or linked patient for completed records |
+| GET | `/api/encounters/:id` | Read a consultation; doctor or linked patient for approved records |
+| PATCH | `/api/encounters/:id/visibility` | Doctor publishes/unpublishes a completed consultation for its linked patient |
 
 Existing MongoDB patient and encounter records are preserved. Human-readable patient/case codes remain separate from MongoDB ObjectIds.
 
@@ -115,6 +116,7 @@ server/
   src/models/Patient.js
   src/models/Encounter.js
   src/models/User.js
+  src/models/Session.js
   src/routes/auth.js
   src/routes/patients.js
   src/routes/encounters.js
