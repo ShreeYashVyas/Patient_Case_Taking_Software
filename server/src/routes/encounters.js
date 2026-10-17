@@ -2,12 +2,24 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import Patient from '../models/Patient.js';
 import Encounter from '../models/Encounter.js';
+import { authorizeRoles, requireAuth, requireSameOrigin } from '../middleware/auth.js';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
+router.get('/', requireAuth, authorizeRoles('doctor', 'patient'), async (req, res) => {
   const filter = {};
-  if (typeof req.query.patientId === 'string' && req.query.patientId) {
+
+  if (req.user.role === 'patient') {
+    if (!req.user.patientId) {
+      return res.status(403).json({ message: 'This account is not linked to a patient record.' });
+    }
+    if (typeof req.query.patientId === 'string' && req.query.patientId !== req.user.patientId) {
+      return res.status(403).json({ message: 'You can only access your own consultations.' });
+    }
+    filter.patient = req.user.patientId;
+    filter.status = { $in: ['Completed', 'Follow-up'] };
+    filter.patientVisible = true;
+  } else if (typeof req.query.patientId === 'string' && req.query.patientId) {
     if (!mongoose.isValidObjectId(req.query.patientId)) {
       return res.status(400).json({ message: 'Invalid patientId.' });
     }
@@ -22,7 +34,7 @@ router.get('/', async (req, res) => {
   res.json({ data: encounters, count: encounters.length });
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireSameOrigin, requireAuth, authorizeRoles('doctor'), async (req, res) => {
   const body = req.body || {};
   if (!body.patientId || !mongoose.isValidObjectId(body.patientId)) {
     return res.status(400).json({ message: 'Select a valid patient.' });
@@ -55,6 +67,7 @@ router.post('/', async (req, res) => {
     plan: body.plan || '',
     followUpDate: body.followUpDate || null,
     status: body.status || (body.followUpDate ? 'Follow-up' : 'Completed'),
+    patientVisible: false,
   });
 
   patient.lastVisit = encounter.visitDate;
@@ -68,7 +81,33 @@ router.post('/', async (req, res) => {
   res.status(201).json({ data: saved });
 });
 
-router.get('/:id', async (req, res) => {
+router.patch('/:id/visibility', requireSameOrigin, requireAuth, authorizeRoles('doctor'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ message: 'Invalid case ID.' });
+  }
+  if (typeof req.body?.visible !== 'boolean') {
+    return res.status(400).json({ message: 'visible must be true or false.' });
+  }
+
+  const encounter = await Encounter.findById(req.params.id);
+  if (!encounter) return res.status(404).json({ message: 'Consultation not found.' });
+  if (req.body.visible && !['Completed', 'Follow-up'].includes(encounter.status)) {
+    return res.status(400).json({ message: 'Only completed consultations can be shared with the patient.' });
+  }
+
+  encounter.patientVisible = req.body.visible;
+  await encounter.save();
+  return res.json({
+    data: {
+      id: String(encounter._id),
+      caseCode: encounter.caseCode,
+      status: encounter.status,
+      patientVisible: encounter.patientVisible,
+    },
+  });
+});
+
+router.get('/:id', requireAuth, authorizeRoles('doctor', 'patient'), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(400).json({ message: 'Invalid case ID.' });
   }
@@ -76,6 +115,18 @@ router.get('/:id', async (req, res) => {
     .populate('patient', 'patientCode fullName')
     .lean();
   if (!encounter) return res.status(404).json({ message: 'Consultation not found.' });
+
+  if (req.user.role === 'patient') {
+    const linkedPatientId = encounter.patient?._id ? String(encounter.patient._id) : '';
+    if (
+      !req.user.patientId
+      || linkedPatientId !== req.user.patientId
+      || !encounter.patientVisible
+      || !['Completed', 'Follow-up'].includes(encounter.status)
+    ) {
+      return res.status(403).json({ message: 'This consultation is not available in your patient portal.' });
+    }
+  }
   res.json({ data: encounter });
 });
 

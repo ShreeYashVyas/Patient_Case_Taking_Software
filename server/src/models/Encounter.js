@@ -25,6 +25,7 @@ const encounterSchema = new mongoose.Schema({
   plan: { type: String, trim: true, maxlength: 10000, default: '' },
   followUpDate: { type: Date, default: null },
   status: { type: String, enum: ['In progress', 'Completed', 'Follow-up'], default: 'Completed' },
+  patientVisible: { type: Boolean, default: false },
 }, { timestamps: true, versionKey: false });
 
 encounterSchema.pre('validate', function assignCaseCode() {

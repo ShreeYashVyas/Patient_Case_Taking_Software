@@ -2,6 +2,7 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import Patient from '../models/Patient.js';
 import Encounter from '../models/Encounter.js';
+import { authorizeRoles, requireAuth, requireSameOrigin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -11,7 +12,7 @@ function cleanOptionalString(value) {
   return cleaned === '—' ? '' : cleaned;
 }
 
-router.get('/', async (req, res) => {
+router.get('/', requireAuth, authorizeRoles('doctor', 'receptionist'), async (req, res) => {
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
   const filter = search
     ? {
@@ -23,11 +24,13 @@ router.get('/', async (req, res) => {
       }
     : {};
 
-  const patients = await Patient.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+  const query = Patient.find(filter).sort({ createdAt: -1 }).limit(100);
+  if (req.user.role === 'receptionist') query.select('-chiefComplaint');
+  const patients = await query.lean();
   res.json({ data: patients, count: patients.length });
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireSameOrigin, requireAuth, authorizeRoles('doctor', 'receptionist'), async (req, res) => {
   const payload = { ...req.body };
   for (const key of ['phone', 'email', 'bloodGroup', 'chiefComplaint']) {
     if (payload[key] !== undefined) payload[key] = cleanOptionalString(payload[key]);
@@ -48,30 +51,56 @@ router.post('/', async (req, res) => {
     email: payload.email || '',
     bloodGroup: payload.bloodGroup || '',
     status: payload.status || 'Active',
-    chiefComplaint: payload.chiefComplaint || '',
+    chiefComplaint: req.user.role === 'doctor' ? (payload.chiefComplaint || '') : '',
   });
   res.status(201).json({ data: patient });
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAuth, async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(400).json({ message: 'Invalid patient ID.' });
   }
+  if (!['doctor', 'receptionist', 'patient'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'You do not have permission to access this resource.' });
+  }
+
   const patient = await Patient.findById(req.params.id).lean();
   if (!patient) return res.status(404).json({ message: 'Patient not found.' });
 
-  const encounters = await Encounter.find({ patient: patient._id })
+  if (req.user.role === 'patient' && req.user.patientId !== String(patient._id)) {
+    return res.status(403).json({ message: 'You can only access your own patient record.' });
+  }
+
+  if (req.user.role === 'receptionist') {
+    const {
+      _id, patientCode, fullName, dateOfBirth, age, gender, phone,
+      email, bloodGroup, status, createdAt, updatedAt,
+    } = patient;
+    return res.json({
+      data: {
+        _id, patientCode, fullName, dateOfBirth, age, gender, phone,
+        email, bloodGroup, status, createdAt, updatedAt,
+      },
+    });
+  }
+
+  const encounterFilter = { patient: patient._id };
+  if (req.user.role === 'patient') {
+    encounterFilter.status = { $in: ['Completed', 'Follow-up'] };
+    encounterFilter.patientVisible = true;
+  }
+  const encounters = await Encounter.find(encounterFilter)
     .sort({ visitDate: -1 })
     .limit(100)
     .lean();
   res.json({ data: { ...patient, encounters } });
 });
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireSameOrigin, requireAuth, authorizeRoles('doctor', 'receptionist'), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(400).json({ message: 'Invalid patient ID.' });
   }
-  const allowed = ['fullName', 'dateOfBirth', 'age', 'gender', 'phone', 'email', 'bloodGroup', 'status', 'chiefComplaint'];
+  const allowed = ['fullName', 'dateOfBirth', 'age', 'gender', 'phone', 'email', 'bloodGroup', 'status'];
   const updates = {};
   for (const key of allowed) {
     if (Object.hasOwn(req.body, key)) updates[key] = cleanOptionalString(req.body[key]);
@@ -81,7 +110,19 @@ router.patch('/:id', async (req, res) => {
     runValidators: true,
   });
   if (!patient) return res.status(404).json({ message: 'Patient not found.' });
-  res.json({ data: patient });
+  if (req.user.role === 'receptionist') {
+    const {
+      _id, patientCode, fullName, dateOfBirth, age, gender, phone,
+      email, bloodGroup, status, createdAt, updatedAt,
+    } = patient.toObject();
+    return res.json({
+      data: {
+        _id, patientCode, fullName, dateOfBirth, age, gender, phone,
+        email, bloodGroup, status, createdAt, updatedAt,
+      },
+    });
+  }
+  return res.json({ data: patient });
 });
 
 export default router;
