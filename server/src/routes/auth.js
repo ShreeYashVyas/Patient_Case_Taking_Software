@@ -62,7 +62,7 @@ router.get('/me', requireAuth, (req, res) => {
 router.get('/access', requireAuth, (req, res) => {
   const access = {
     patient: ['own profile', 'own approved consultations'],
-    receptionist: ['patient registration', 'patient demographics', 'appointment workflow'],
+    receptionist: ['patient registration', 'patient demographics'],
     doctor: ['patient records', 'clinical history', 'consultations'],
   };
   return res.json({ role: req.user.role, permissions: access[req.user.role] || [] });
