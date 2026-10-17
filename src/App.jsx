@@ -194,7 +194,7 @@ function Dashboard({ patients, appointments, encounters, onAddPatient, onGo, onO
         </div>
       </div>
 
-      {noticeVisible && <div className="demo-notice"><span className="notice-icon"><ShieldCheck size={16} /></span><span><strong>Demo workspace</strong> — all patient names and clinical details are fictional sample data.</span><button className="notice-dismiss" onClick={() => setNoticeVisible(false)} aria-label="Dismiss demo note"><X size={15} /></button></div>}
+      {noticeVisible && <div className="demo-notice"><span className="notice-icon"><ShieldCheck size={16} /></span><span><strong>Demo workspace</strong> — Use fictional patient information during development. Security controls are not complete.</span><button className="notice-dismiss" onClick={() => setNoticeVisible(false)} aria-label="Dismiss demo note"><X size={15} /></button></div>}
 
       <div className="metrics-grid">
         <MetricCard icon={Users} label="Total patients" value={String(patients.length).padStart(2, '0')} change="8.4%" changeLabel="vs. last month" tone="blue" />
@@ -211,7 +211,9 @@ function Dashboard({ patients, appointments, encounters, onAddPatient, onGo, onO
           </div>
           <div className="schedule-date"><CalendarDays size={15} /><span>{todayLabel}</span><span className="schedule-count">{appointments.length} visits</span></div>
           <div className="appointment-list">
-            {appointments.map((appointment) => <AppointmentRow key={appointment.id} appointment={appointment} onOpenPatient={onOpenPatient} />)}
+            {appointments.length
+              ? appointments.map((appointment) => <AppointmentRow key={appointment.id} appointment={appointment} onOpenPatient={onOpenPatient} />)
+              : <div className="empty-inline">Appointment scheduling is not connected yet.</div>}
           </div>
           <button className="button button-full button-light" onClick={() => onGo('Consultations')}>View full schedule <ArrowRight size={15} /></button>
         </section>
@@ -235,11 +237,7 @@ function Dashboard({ patients, appointments, encounters, onAddPatient, onGo, onO
         <RecentPatientsTable patients={patients} onViewAll={() => onGo('Patients')} onSelectPatient={onOpenPatient} />
         <section className="panel activity-feed-panel">
           <div className="panel-header"><div><h2>Recent activity</h2><p>Latest updates in your workspace</p></div><button className="icon-button quiet-button" aria-label="More activity options"><MoreHorizontal size={19} /></button></div>
-          <div className="activity-feed">
-            <div className="feed-item"><span className="feed-icon feed-blue"><UserRoundPlus size={16} /></span><div><p><strong>New patient registered</strong></p><span>Ananya Rao was added to the records.</span><small>Today, 9:02 AM</small></div></div>
-            <div className="feed-item"><span className="feed-icon feed-mint"><FileCheck2 size={16} /></span><div><p><strong>Consultation saved</strong></p><span>Routine check-up · Ananya Rao</span><small>Today, 9:25 AM</small></div></div>
-            <div className="feed-item"><span className="feed-icon feed-violet"><CalendarClock size={16} /></span><div><p><strong>Follow-up noted</strong></p><span>Rohan Kapoor · Oct 20, 2026</span><small>Yesterday, 4:40 PM</small></div></div>
-          </div>
+          <div className="activity-feed"><div className="empty-inline">Live activity tracking will be added in a later milestone.</div></div>
           <button className="link-button feed-link" onClick={() => onGo('Consultations')}>View case history <ArrowRight size={15} /></button>
         </section>
       </div>
