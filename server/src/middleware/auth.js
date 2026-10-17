@@ -1,66 +1,11 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import User from '../models/User.js';
+import { createHash, randomBytes } from 'node:crypto';
+import Session from '../models/Session.js';
 
 const COOKIE_NAME = 'caseflow_session';
 const SESSION_SECONDS = 60 * 60;
 
-function authSecret() {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret || Buffer.byteLength(secret) < 32) {
-    const error = new Error('Authentication is not configured. Set AUTH_SECRET to a random value of at least 32 bytes.');
-    error.status = 503;
-    throw error;
-  }
-  return secret;
-}
-
-function sign(value) {
-  return createHmac('sha256', authSecret()).update(value).digest('base64url');
-}
-
-export function createSessionToken(userId) {
-  const now = Math.floor(Date.now() / 1000);
-  const payload = Buffer.from(JSON.stringify({
-    sub: String(userId),
-    iat: now,
-    exp: now + SESSION_SECONDS,
-  })).toString('base64url');
-  return `${payload}.${sign(payload)}`;
-}
-
-function readSessionToken(token) {
-  if (typeof token !== 'string' || token.length > 2048) return null;
-  const parts = token.split('.');
-  if (parts.length !== 2) return null;
-
-  const [payload, suppliedSignature] = parts;
-  let expectedSignature;
-  try {
-    expectedSignature = Buffer.from(sign(payload), 'base64url');
-  } catch {
-    return null;
-  }
-  const actualSignature = Buffer.from(suppliedSignature, 'base64url');
-  if (
-    actualSignature.length !== expectedSignature.length
-    || !timingSafeEqual(actualSignature, expectedSignature)
-  ) return null;
-
-  try {
-    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    const now = Math.floor(Date.now() / 1000);
-    if (
-      typeof claims.sub !== 'string'
-      || !/^[a-f0-9]{24}$/i.test(claims.sub)
-      || !Number.isInteger(claims.exp)
-      || claims.exp <= now
-      || !Number.isInteger(claims.iat)
-      || claims.iat > now + 60
-    ) return null;
-    return claims;
-  } catch {
-    return null;
-  }
+function hashToken(token) {
+  return createHash('sha256').update(token).digest('hex');
 }
 
 function getCookie(req, name) {
@@ -75,6 +20,16 @@ function getCookie(req, name) {
   return null;
 }
 
+export async function createSession(userId) {
+  const token = randomBytes(32).toString('base64url');
+  await Session.create({
+    user: userId,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + SESSION_SECONDS * 1000),
+  });
+  return token;
+}
+
 export function setSessionCookie(res, token) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_SECONDS}${secure}`);
@@ -85,28 +40,40 @@ export function clearSessionCookie(res) {
   res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
+export async function revokeSession(req) {
+  const token = getCookie(req, COOKIE_NAME);
+  if (token && token.length <= 128) {
+    await Session.deleteOne({ tokenHash: hashToken(token) });
+  }
+}
+
 export async function requireAuth(req, res, next) {
   try {
     const token = getCookie(req, COOKIE_NAME);
-    const claims = readSessionToken(token);
-    if (!claims) return res.status(401).json({ message: 'Please sign in to continue.' });
-
-    // Look up the user on every request so disabled accounts and role changes
-    // take effect immediately rather than waiting for a token to expire.
-    const user = await User.findById(claims.sub)
-      .select('name email role patientId isActive')
-      .lean();
-    if (!user || !user.isActive) {
-      clearSessionCookie(res);
-      return res.status(401).json({ message: 'This account is unavailable. Please sign in again.' });
+    if (!token || token.length > 128) {
+      return res.status(401).json({ message: 'Please sign in to continue.' });
     }
 
+    // Only the hash is stored. Every request checks the live session and user,
+    // so logout and account deactivation take effect immediately.
+    const session = await Session.findOne({
+      tokenHash: hashToken(token),
+      expiresAt: { $gt: new Date() },
+    }).populate('user', 'name email role patientId isActive');
+
+    if (!session || !session.user || !session.user.isActive) {
+      if (session) await Session.deleteOne({ _id: session._id });
+      clearSessionCookie(res);
+      return res.status(401).json({ message: 'Your session has expired. Please sign in again.' });
+    }
+
+    req.sessionId = String(session._id);
     req.user = {
-      id: String(user._id),
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      patientId: user.patientId ? String(user.patientId) : null,
+      id: String(session.user._id),
+      name: session.user.name,
+      email: session.user.email,
+      role: session.user.role,
+      patientId: session.user.patientId ? String(session.user.patientId) : null,
     };
     return next();
   } catch (error) {
