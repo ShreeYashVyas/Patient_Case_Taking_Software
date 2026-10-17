@@ -16,10 +16,6 @@ const app = express();
 const port = Number(process.env.PORT) || 5000;
 const clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
-if (!process.env.AUTH_SECRET || Buffer.byteLength(process.env.AUTH_SECRET) < 32) {
-  console.warn('AUTH_SECRET is missing or too short. Set a random value of at least 32 bytes in server/.env before signing in.');
-}
-
 app.disable('x-powered-by');
 app.use(helmet());
 app.use(cors({
