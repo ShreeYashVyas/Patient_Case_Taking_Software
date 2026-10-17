@@ -36,13 +36,7 @@ Copy the example environment file:
 Copy-Item .env.example .env
 ```
 
-Edit `server/.env` and set `MONGO_URI` to your local MongoDB URI or Atlas connection string. Generate a private session-signing secret:
-
-```bash
-node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
-```
-
-Paste the generated value into `AUTH_SECRET` in `server/.env`. Keep the real `.env` private; do not commit it or share its secrets. Keep `CLIENT_ORIGIN` matched to the browser origin used by your frontend.
+Edit `server/.env` and set `MONGO_URI` to your local MongoDB URI or Atlas connection string. Keep the real `.env` private; do not commit it or share its credentials. Keep `CLIENT_ORIGIN` matched to the browser origin used by your frontend.
 
 Run the API:
 
@@ -71,7 +65,7 @@ Run from the `server` folder:
 node scripts/createUser.js
 ```
 
-The script refuses to overwrite an existing account. After it succeeds, remove the temporary `BOOTSTRAP_USER_*` values and `BOOTSTRAP_PATIENT_ID` from `.env`. The password is stored as a salted scrypt hash, not plain text.
+The script refuses to overwrite an existing account. After it succeeds, remove the temporary `BOOTSTRAP_USER_*` values and `BOOTSTRAP_PATIENT_ID` from `.env`. The password is stored as a salted scrypt hash, not plain text. Active sessions use random, HttpOnly cookies; only a SHA-256 hash of each session token is stored in MongoDB, allowing logout and account deactivation to revoke access immediately.
 
 ## 4. Authentication endpoints
 
@@ -83,7 +77,7 @@ The script refuses to overwrite an existing account. After it succeeds, remove t
 | GET | `/api/auth/access` | Return the account role and a simple permission summary |
 | GET | `/api/health` | Public server/database status |
 
-Sessions expire after one hour. The session cookie is HttpOnly and SameSite=Strict, and Secure is enabled in production. Login uses a rate limit. State-changing API requests validate the browser origin.
+Sessions expire after one hour. The server stores only a hash of each random session token and checks the live session on each request. The cookie is HttpOnly and SameSite=Strict, and Secure is enabled in production. Login uses a rate limit. State-changing API requests validate the browser origin.
 
 ## 5. Role permissions
 
