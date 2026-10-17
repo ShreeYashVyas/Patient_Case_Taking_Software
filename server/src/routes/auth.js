@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import User from '../models/User.js';
 import { verifyPassword } from '../lib/password.js';
 import {
@@ -11,6 +12,13 @@ import {
 } from '../middleware/auth.js';
 
 const router = Router();
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { message: 'Too many login attempts. Please wait 15 minutes and try again.' },
+});
 
 function publicUser(user) {
   return {
@@ -22,7 +30,7 @@ function publicUser(user) {
   };
 }
 
-router.post('/login', requireSameOrigin, async (req, res) => {
+router.post('/login', loginLimiter, requireSameOrigin, async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
