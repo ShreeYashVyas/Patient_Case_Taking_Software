@@ -3,7 +3,6 @@ import rateLimit from 'express-rate-limit';
 import User from '../models/User.js';
 import { verifyPassword } from '../lib/password.js';
 import {
-  authorizeRoles,
   clearSessionCookie,
   createSession,
   requireAuth,
