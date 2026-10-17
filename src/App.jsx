@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, CalendarDays, Check,
   ChevronDown, ChevronRight, CircleHelp, ClipboardList, Clock3, FileCheck2, FilePlus2,
@@ -6,7 +6,7 @@ import {
   Plus, Search, Settings, ShieldCheck, Stethoscope, UserRound, UserRoundPlus, Users,
   X, XCircle, CalendarClock, ClipboardCheck, Sparkles, PanelLeftClose,
 } from 'lucide-react';
-import { initialAppointments, initialEncounters, initialPatients } from './data';
+import { getPatients, getEncounters, createPatient, createEncounter } from './api';
 
 const navGroups = [
   {
@@ -28,6 +28,62 @@ const navGroups = [
 const formatToday = () => new Intl.DateTimeFormat('en-IN', {
   weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
 }).format(new Date());
+function formatRecordDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+}
+
+function ageFromDateOfBirth(value) {
+  if (!value) return null;
+  const birthDate = new Date(value);
+  if (Number.isNaN(birthDate.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const beforeBirthday = today.getMonth() < birthDate.getMonth()
+    || (today.getMonth() === birthDate.getMonth() && today.getDate() < birthDate.getDate());
+  if (beforeBirthday) age -= 1;
+  return age >= 0 ? age : null;
+}
+
+function mapPatient(record) {
+  const dateOfBirth = record.dateOfBirth ? new Date(record.dateOfBirth).toISOString().slice(0, 10) : '';
+  return {
+    id: record.patientCode || record._id,
+    mongoId: record._id,
+    fullName: record.fullName || '',
+    dateOfBirth,
+    age: record.age ?? ageFromDateOfBirth(record.dateOfBirth),
+    gender: record.gender || 'Prefer not to say',
+    phone: record.phone || '',
+    email: record.email || '',
+    bloodGroup: record.bloodGroup || '',
+    lastVisit: formatRecordDate(record.lastVisit) || 'No visits yet',
+    status: record.status || 'Active',
+    chiefComplaint: record.chiefComplaint || '',
+  };
+}
+
+function mapEncounter(record, patients = []) {
+  const linkedPatient = record.patient && typeof record.patient === 'object' ? record.patient : null;
+  const localPatient = patients.find((patient) =>
+    patient.mongoId === (linkedPatient?._id || record.patient)
+  );
+  return {
+    id: record.caseCode || record._id,
+    mongoId: record._id,
+    patientId: linkedPatient?.patientCode || localPatient?.id || '',
+    patientMongoId: linkedPatient?._id || localPatient?.mongoId || '',
+    patientName: linkedPatient?.fullName || localPatient?.fullName || '',
+    date: formatRecordDate(record.visitDate),
+    chiefComplaint: record.chiefComplaint || '',
+    assessment: record.assessment || '',
+    status: record.status || 'Completed',
+    followUpDate: formatRecordDate(record.followUpDate),
+  };
+}
+
 
 function initials(name = '') {
   return name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
@@ -355,9 +411,11 @@ function SearchResults({ query, onChoose, onClose }) {
 
 export default function App() {
   const [activePage, setActivePage] = useState('Dashboard');
-  const [patients, setPatients] = useState(initialPatients);
-  const [appointments] = useState(initialAppointments);
-  const [encounters, setEncounters] = useState(initialEncounters);
+  const [patients, setPatients] = useState([]);
+  const [appointments] = useState([]);
+  const [encounters, setEncounters] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isAddPatientOpen, setAddPatientOpen] = useState(false);
   const [patientSearch, setPatientSearch] = useState('');
   const [encounterSearch, setEncounterSearch] = useState('');
@@ -372,45 +430,106 @@ export default function App() {
   const navTo = (page) => { if (page !== 'Case Taking') setPreselectedPatientId(''); setActivePage(page); setSelectedPatientId(null); setMobileNavOpen(false); };
   const notify = (message) => { setToast(message); window.setTimeout(() => setToast(''), 3200); };
 
-  const addPatient = (form) => {
-    const nextNumber = 1025 + patients.length - initialPatients.length;
-    const newPatient = {
-      ...form,
-      id: `PT-${nextNumber}`,
-      phone: form.phone || '—',
-      email: form.email || '—',
-      bloodGroup: form.bloodGroup || '',
-      lastVisit: 'No visits yet',
-      status: 'Active',
-      chiefComplaint: '',
-    };
-    setPatients((current) => [newPatient, ...current]);
-    setAddPatientOpen(false);
-    setPatientSearch('');
-    setSelectedPatientId(newPatient.id);
-    setActivePage('Patients');
-    notify(`${newPatient.fullName} added to patient records.`);
+  useEffect(() => {
+    let active = true;
+
+    async function loadRecords() {
+      setLoading(true);
+      try {
+        const [patientRecords, encounterRecords] = await Promise.all([
+          getPatients(),
+          getEncounters(),
+        ]);
+        if (!active) return;
+        const mappedPatients = patientRecords.map(mapPatient);
+        setPatients(mappedPatients);
+        setEncounters(encounterRecords.map((record) => mapEncounter(record, mappedPatients)));
+        setLoadError('');
+      } catch (error) {
+        if (active) {
+          setLoadError(error.message || 'Could not connect to the CaseFlow API.');
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadRecords();
+    return () => { active = false; };
+  }, []);
+
+  const addPatient = async (form) => {
+    try {
+      const record = await createPatient({
+        fullName: form.fullName,
+        dateOfBirth: form.dateOfBirth || null,
+        age: form.age ?? null,
+        gender: form.gender || 'Prefer not to say',
+        phone: form.phone || '',
+        email: form.email || '',
+        bloodGroup: form.bloodGroup || '',
+        status: 'Active',
+      });
+      const newPatient = mapPatient(record);
+      setPatients((current) => [newPatient, ...current]);
+      setAddPatientOpen(false);
+      setPatientSearch('');
+      setSelectedPatientId(newPatient.id);
+      setActivePage('Patients');
+      setLoadError('');
+      notify(newPatient.fullName + ' added to patient records.');
+    } catch (error) {
+      notify('Could not add patient: ' + (error.message || 'API request failed.'));
+    }
   };
 
-  const saveCase = (form) => {
+  const saveCase = async (form) => {
     const patient = patients.find((item) => item.id === form.patientId);
-    const dateLabel = new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-    const followUpDate = form.followUpDate ? new Date(`${form.followUpDate}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '';
-    const newEncounter = {
-      ...form,
-      id: `CS-${5082 + encounters.length - initialEncounters.length}`,
-      patientName: patient?.fullName || form.patientName,
-      date: dateLabel,
-      followUpDate,
-      status: 'Completed',
-    };
-    setEncounters((current) => [newEncounter, ...current]);
-    if (patient) {
-      setPatients((current) => current.map((item) => item.id === patient.id ? { ...item, lastVisit: dateLabel, chiefComplaint: form.chiefComplaint } : item));
+    if (!patient?.mongoId) {
+      notify('Select a valid patient before saving the case.');
+      return;
     }
-    setPreselectedPatientId('');
-    setActivePage('Consultations');
-    notify(`Case ${newEncounter.id} saved for ${newEncounter.patientName}.`);
+
+    try {
+      const record = await createEncounter({
+        patientId: patient.mongoId,
+        visitDate: new Date().toISOString(),
+        chiefComplaint: form.chiefComplaint.trim(),
+        duration: form.duration || '',
+        history: form.history || '',
+        medicalHistory: form.medicalHistory || '',
+        allergies: form.allergies || '',
+        medications: form.medications || '',
+        vitals: {
+          bloodPressure: form.bloodPressure || '',
+          pulse: form.pulse || '',
+          temperature: form.temperature || '',
+          respiratoryRate: form.respiratoryRate || '',
+          weight: form.weight || '',
+        },
+        examination: form.examination || '',
+        assessment: form.assessment || '',
+        plan: form.plan || '',
+        followUpDate: form.followUpDate || null,
+      });
+      const newEncounter = mapEncounter(record, patients);
+      const dateLabel = newEncounter.date || formatRecordDate(new Date());
+      setEncounters((current) => [newEncounter, ...current]);
+      setPatients((current) => current.map((item) => item.id === patient.id
+        ? {
+            ...item,
+            lastVisit: dateLabel,
+            chiefComplaint: form.chiefComplaint,
+            status: form.followUpDate ? 'Follow-up' : item.status,
+          }
+        : item));
+      setPreselectedPatientId('');
+      setActivePage('Consultations');
+      setLoadError('');
+      notify('Case ' + newEncounter.id + ' saved for ' + newEncounter.patientName + '.');
+    } catch (error) {
+      notify('Could not save case: ' + (error.message || 'API request failed.'));
+    }
   };
 
   const openPatient = (patientId) => { setSelectedPatientId(patientId); setActivePage('Patients'); setPatientSearch(''); };
@@ -434,6 +553,8 @@ export default function App() {
       <div className="main-column">
         <Topbar globalSearch={globalSearch} setGlobalSearch={setGlobalSearch} onSearchResult={runGlobalSearch} onMobileMenu={() => setMobileNavOpen(true)} activePage={selectedPatient ? 'Patient profile' : activePage} />
         <main className="main-content">
+          {loading && <div className="demo-notice" role="status">Loading patient records from CaseFlow...</div>}
+          {loadError && <div className="demo-notice" role="alert"><strong>Could not load records.</strong> {loadError} Start the API server and check the MongoDB connection, then refresh.</div>}
           {activePage === 'Dashboard' && <Dashboard patients={patients} appointments={appointments} encounters={encounters} onAddPatient={() => setAddPatientOpen(true)} onGo={navTo} onOpenPatient={openPatient} />}
           {activePage === 'Patients' && (selectedPatientId ? <PatientDetail patient={selectedPatient} encounters={encounters} onBack={() => setSelectedPatientId(null)} onNewCase={openNewCaseForPatient} /> : <PatientsPage patients={patients} search={patientSearch} setSearch={setPatientSearch} onAddPatient={() => setAddPatientOpen(true)} onSelectPatient={openPatient} />)}
           {activePage === 'Case Taking' && <CaseTakingPage key={preselectedPatientId || 'new-case'} patients={patients} onSaveCase={saveCase} preselectedPatientId={preselectedPatientId} />}
